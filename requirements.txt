@@ -1,5 +1,6 @@
 numpy
-python-opencv
+opencv-python
 tensorflow
 kenlm
 networkx
+editdistance
