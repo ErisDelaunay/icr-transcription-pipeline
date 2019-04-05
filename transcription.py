@@ -454,7 +454,7 @@ if __name__ == '__main__':
     flags.DEFINE_float('pdist_thr', 0.8, 'probability distribution pruning threshold')
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
-    flags.DEFINE_string('ocr_dir', 'ocr_model_multiout/modelname.hdf5', 'character classifier model folder')
+    flags.DEFINE_string('ocr_dir', 'ocr_model/multiout.hdf5', 'character classifier model folder')
     flags.DEFINE_string('word_dir', 'word_imgs/images', 'word image source folder')
     flags.DEFINE_string('gt_dir', 'word_imgs/transcriptions', 'ground truth source folder')
 
