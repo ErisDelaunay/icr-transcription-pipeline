@@ -8,24 +8,25 @@ import base64
 import numpy as np
 import tensorflow as tf
 import networkx as nx
+from tensorflow.python import keras
 from time import time
 from math import inf
 from evaluation import evaluate_word_accuracy, mrr, correct_transcr_count
-from cnn import cnn_model_fn
+from absl import app, flags
 
 """
 HELPER FUNCTIONS
 """
 
 
-def _map_class_to_chars(
-            char_class,
-            all_mappings={
-                '0_b_stroke': "b-",
+def _map_class_to_chars(char_class, all_mappings=None):
+    if all_mappings == None:
+        all_mappings = {
+                '0_b_stroke': "b", # -
                 '0_con': "con",
                 '0_curl': "us",
-                '0_d_stroke': "d-",
-                '0_l_stroke': "l-",
+                '0_d_stroke': "d", # -
+                '0_l_stroke': "l", # -
                 '0_nt': "et",
                 '0_per': "per",
                 '0_pro': "pro",
@@ -59,13 +60,12 @@ def _map_class_to_chars(
                 'u': 'u',
                 'x': 'x'
             }
-    ):
     return all_mappings[char_class]
 
 
 def _dst_suffix():
     dst = ''
-    for k, v in sorted(tf.flags.FLAGS.flag_values_dict().items()):
+    for k, v in sorted(flags.FLAGS.flag_values_dict().items()):
         if k not in ['h', 'help', 'helpfull', 'helpshort'] and '_dir' not in k:
             dst += '.' + k + '=' + str(v)
     return dst
@@ -141,7 +141,7 @@ def _make_sample(segments, sample_shape=56):
             interpolation=cv2.INTER_NEAREST
         )
 
-    return sample_img
+    return sample_img.reshape((sample_shape,sample_shape,1))
 
 
 """
@@ -185,16 +185,42 @@ def multidag_dfs_kenlm(graph, start, end, path_so_far=[], threshold=-inf):
                         graph, v, end, path_so_far + [(u, v, data)], threshold):
                     yield path
 
+def custom_loss(y_true, y_pred):
+    # Compute the binary loss (is char / not char)
+    loss_nochar = keras.losses.binary_crossentropy(y_true[:, 0:1], y_pred[:, 0:1], from_logits=True)
+
+    # These are the locations of chars inside the current batch
+    idx_chars = tf.where(1 - y_true[:, 0])[:, 0]
+
+    # Compute the cross-entropy loss only for chars
+    loss_chars = keras.losses.categorical_crossentropy(
+            tf.gather(y_true[:, 1:], idx_chars),
+            tf.gather(y_pred[:, 1:], idx_chars), from_logits=True)
+
+    # Sum the two losses (weighted)
+    return tf.reduce_sum(loss_nochar) + tf.reduce_sum(loss_chars)*5
+
+def char_accuracy(y_true, y_pred):
+    # Returns the accuracy of recognition for the characters
+    idx_chars = tf.where(1 - y_true[:, 0])[:, 0]
+    return keras.metrics.categorical_accuracy(
+            tf.gather(y_true[:, 1:], idx_chars),
+            tf.gather(y_pred[:, 1:], idx_chars))
+
+def nochar_accuracy(y_true, y_pred):
+    # Returns the accuracy of recognizing chars vs. no-chars
+    return keras.metrics.binary_accuracy(y_true[:, 0:1], y_pred[:, 0:1])
 
 """
-TENSORFLOW MAIN
+APP MAIN
 """
 
+import matplotlib.pyplot as plt
 
 def main(unused_argv):
     # set destination folder names
-    sfx = _dst_suffix()
-    tsc_dir, dag_dir, eval_fnm = 'new_tsc' + sfx, 'new_dag' + sfx, 'new_eval' + sfx
+    # sfx = _dst_suffix()
+    tsc_dir, dag_dir, eval_fnm = 'tsc', 'dag', 'eval'
 
     # make necessary directories
     if os.path.isdir(tsc_dir):
@@ -205,38 +231,42 @@ def main(unused_argv):
         shutil.rmtree(dag_dir)
     os.mkdir(dag_dir)
 
-    all_classes = [
-        '0_b_stroke', '0_con', '0_curl', '0_d_stroke', '0_l_stroke', '0_nt',
-        '0_per', '0_pro', '0_qui', '0_rum', '0_semicolon', '1_not_char', 'a',
-        'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'm', 'n', 'o', 'p', 'q',
-        'r', 's_alta', 's_ending', 't', 'u', 'x'
+    all_classes = [ # '1_not_char',
+        '0_b_stroke', '0_con', '0_curl', '0_d_stroke', '0_l_stroke',
+        '0_nt',       '0_per',  '0_pro', '0_qui',      '0_rum',     '0_semicolon',
+        'a', 'b', 'c', 'd', 'e',      'f',        'g', 'h', 'i', 'l', 'm', 'n',
+        'o', 'p', 'q', 'r', 's_alta', 's_ending', 't', 'u', 'x'
     ]
     clrs = cv2.imread('palette2.png')[0]
 
-    # create the Estimator
-    icr_classifier = tf.estimator.Estimator(
-        model_fn=cnn_model_fn,
-        model_dir=tf.flags.FLAGS.ocr_dir
+
+    icr_classifier = keras.models.load_model(
+        flags.FLAGS.ocr_dir,
+        custom_objects={
+            'custom_loss':custom_loss,
+            'char_accuracy':char_accuracy,
+            'nochar_accuracy':nochar_accuracy
+        }
     )
 
     # load the Language Model
     global model_LM
-    if tf.flags.FLAGS.n_gram == 0:
+    if flags.FLAGS.n_gram == 0:
         model_LM = None
     else:
         model_LM = kenlm.Model(
             os.path.join(
-                tf.flags.FLAGS.lm_dir,
-                'corpus_%dgram.arpa' % tf.flags.FLAGS.n_gram
+                flags.FLAGS.lm_dir,
+                'corpus_%dgram.arpa' % flags.FLAGS.n_gram
             )
         )
 
     start_time = time()
-    words = os.listdir(tf.flags.FLAGS.word_dir)
+    words = os.listdir(flags.FLAGS.word_dir)
 
     for word in words:
         segments, centroids = _compute_segments_and_centroids(
-            os.path.join(tf.flags.FLAGS.word_dir, word)
+            os.path.join(flags.FLAGS.word_dir, word)
         )
 
         sorted_segments, sorted_centroids = zip(
@@ -259,17 +289,15 @@ def main(unused_argv):
         # create samples for prediction
         X_test = np.array([_make_sample(s) for s in grouped_segments], dtype='float32') / 255
 
-        # Predict
-        predict_input_fn = tf.estimator.inputs.numpy_input_fn(
-            x={'x': X_test},
-            num_epochs=1,
-            shuffle=False
-        )
-        predictions = list(icr_classifier.predict(input_fn=predict_input_fn))
+        logit_preds = icr_classifier.predict(X_test)
 
-        # keep top3 classification results
-        top3_preds = [np.argsort(p['probabilities'])[::-1][:3] for p in predictions]
-        not_char_ix = all_classes.index('1_not_char')
+        char_preds = tf.nn.softmax(logit_preds[:, 1:], axis=1).numpy()
+        notchar_preds = tf.nn.sigmoid(logit_preds[:, :1]).numpy()
+
+        # keep top3 classification results and notchar score
+        top3_preds = [
+            (notchar_preds[ix], np.argsort(p)[::-1][:3]) for ix, p in enumerate(char_preds)
+        ]
 
         # filter segment combinations according to classification
         filtered_combinations = []
@@ -277,24 +305,23 @@ def main(unused_argv):
         for i, cc in enumerate(centroid_ids):
             prob_dist = 0.0
             potential_edges = []
-            if not (not_char_ix in top3_preds[i]) or \
-                    (not_char_ix in top3_preds[i] and
-                     predictions[i]['probabilities'][not_char_ix] < tf.flags.FLAGS.notchar_thr):
+            nchar_prob, top3_pred = top3_preds[i]
 
-                for r_ix in top3_preds[i]:
-                    prob_dist += predictions[i]['probabilities'][r_ix]
+            if nchar_prob < flags.FLAGS.notchar_thr:
+                for pred_ix in top3_pred:
+                    prob_dist += char_preds[i][pred_ix]
                     potential_edges.append((
                         cc,
-                        all_classes[r_ix],
-                        predictions[i]['probabilities'][r_ix],
+                        all_classes[pred_ix],
+                        char_preds[i][pred_ix],
                         grouped_segments[i]
                     ))
 
-                    if prob_dist > tf.flags.FLAGS.pdist_thr:
+                    if prob_dist > flags.FLAGS.pdist_thr:
                         break
 
             for pe in potential_edges:
-                if pe[2] > tf.flags.FLAGS.char_thr:
+                if pe[2] > flags.FLAGS.char_thr:
                     filtered_combinations.append(pe)
 
         print(
@@ -366,7 +393,7 @@ def main(unused_argv):
         else:
             start = list(lattice.nodes())[np.argmin([len(n) for n in lattice.nodes()])]
             end = list(lattice.nodes())[np.argmax([len(n) for n in lattice.nodes()])]
-            all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=tf.flags.FLAGS.lm_thr)
+            all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=flags.FLAGS.lm_thr)
 
         transcriptions = []
 
@@ -408,9 +435,9 @@ def main(unused_argv):
     print('time elapsed:', elapsed)
     print(tsc_dir)
 
-    MRR = mrr(tsc_dir, tf.flags.FLAGS.gt_dir)
-    correct_count = correct_transcr_count(tsc_dir, tf.flags.FLAGS.gt_dir)
-    evaluation = evaluate_word_accuracy(tsc_dir, tf.flags.FLAGS.gt_dir)
+    MRR = mrr(tsc_dir, flags.FLAGS.gt_dir)
+    correct_count = correct_transcr_count(tsc_dir, flags.FLAGS.gt_dir)
+    evaluation = evaluate_word_accuracy(tsc_dir, flags.FLAGS.gt_dir)
     evaluation['mrr'] = MRR
     evaluation['time'] = elapsed
     evaluation['correct_overall'] = correct_count
@@ -420,15 +447,15 @@ def main(unused_argv):
 
 
 if __name__ == '__main__':
-    tf.flags.DEFINE_integer('n_gram', 6, 'Language Model order')
-    tf.flags.DEFINE_float('lm_thr', -16.0, 'LM probability pruning threshold')
-    tf.flags.DEFINE_float('char_thr', 0.1, 'character probability pruning threshold')
-    tf.flags.DEFINE_float('notchar_thr', 0.1, 'not character probability pruning threshold')
-    tf.flags.DEFINE_float('pdist_thr', 0.8, 'probability distribution pruning threshold')
-    tf.flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
-    tf.flags.DEFINE_string('lm_dir', './lm_model', 'Language model folder')
-    tf.flags.DEFINE_string('ocr_dir', './ocr_model', 'character classifier model folder')
-    tf.flags.DEFINE_string('word_dir', './color_words', 'word image source folder')
-    tf.flags.DEFINE_string('gt_dir', './ground_truth', 'ground truth source folder')
+    flags.DEFINE_integer('n_gram', 6, 'Language Model order')
+    flags.DEFINE_float('lm_thr', -16.0, 'LM probability pruning threshold')
+    flags.DEFINE_float('char_thr', 0.1, 'character probability pruning threshold')
+    flags.DEFINE_float('notchar_thr', 0.8, 'not character probability pruning threshold')
+    flags.DEFINE_float('pdist_thr', 0.8, 'probability distribution pruning threshold')
+    flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
+    flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
+    flags.DEFINE_string('ocr_dir', 'ocr_model_multiout/modelname.hdf5', 'character classifier model folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/transcriptions', 'ground truth source folder')
 
-    tf.app.run()
+    app.run(main)
