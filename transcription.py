@@ -80,8 +80,7 @@ def _compute_bbx(stats):
     return x1, y1, x2, y2
 
 
-def _compute_segments_and_centroids(word_fnm):
-    word_img = cv2.imread(word_fnm)
+def _compute_segments_and_centroids(word_img):
     hist = cv2.calcHist([word_img], [0, 1, 2], None, [256] * 3, [0, 256] * 3)
     colors = [
         np.array([b, g, r]) for b, g, r in np.argwhere(hist > 0)
@@ -265,9 +264,13 @@ def main(unused_argv):
     words = os.listdir(flags.FLAGS.word_dir)
 
     for word in words:
-        segments, centroids = _compute_segments_and_centroids(
-            os.path.join(flags.FLAGS.word_dir, word)
-        )
+        word_img = cv2.imread(os.path.join(flags.FLAGS.word_dir, word))
+        _, word_img_bin = cv2.threshold(cv2.cvtColor(word_img, cv2.COLOR_BGR2GRAY), 254, 255, cv2.THRESH_BINARY_INV)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(word_img_bin)
+        x1, y1, x2, y2 = _compute_bbx(stats)
+        word_img_crop = word_img[y1:y2,x1:x2]
+
+        segments, centroids = _compute_segments_and_centroids(word_img_crop)
 
         sorted_segments, sorted_centroids = zip(
             *sorted(
@@ -416,7 +419,7 @@ def main(unused_argv):
                 transcript = transcript[:-2] + 'bus'
             if transcript[-2:] == 'q;':
                 transcript = transcript[:-2] + 'que'
-            if len(transcript) * 27 >= int(word.replace('/', '_').split('.')[0].split('_')[-2]):
+            if len(transcript) * 27 >= word_img_crop.shape[1]:
                 # encode image as string
                 _, buffer = cv2.imencode('.png', w_segmentation)
                 png_as_str = base64.b64encode(buffer)
@@ -450,12 +453,12 @@ if __name__ == '__main__':
     flags.DEFINE_integer('n_gram', 6, 'Language Model order')
     flags.DEFINE_float('lm_thr', -16.0, 'LM probability pruning threshold')
     flags.DEFINE_float('char_thr', 0.1, 'character probability pruning threshold')
-    flags.DEFINE_float('notchar_thr', 0.8, 'not character probability pruning threshold')
+    flags.DEFINE_float('notchar_thr', 0.7, 'not character probability pruning threshold')
     flags.DEFINE_float('pdist_thr', 0.8, 'probability distribution pruning threshold')
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
     flags.DEFINE_string('ocr_dir', 'ocr_model/multiout.hdf5', 'character classifier model folder')
-    flags.DEFINE_string('word_dir', 'word_imgs/images', 'word image source folder')
-    flags.DEFINE_string('gt_dir', 'word_imgs/transcriptions', 'ground truth source folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/riccardo_onlyabbr/200r_150_158_1561_2140/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/riccardo_onlyabbr/200r_150_158_1561_2140/transcriptions', 'ground truth source folder')
 
     app.run(main)
