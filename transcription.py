@@ -230,8 +230,8 @@ def main(unused_argv):
         shutil.rmtree(dag_dir)
     os.mkdir(dag_dir)
 
-    all_classes = [ # '1_not_char',
-        '0_b_stroke', '0_con', '0_curl', '0_d_stroke', '0_l_stroke',
+    all_classes = [ # '1_not_char', '0_con',
+        '0_b_stroke', '_curl', '0_d_stroke', '0_l_stroke',
         '0_nt',       '0_per',  '0_pro', '0_qui',      '0_rum',     '0_semicolon',
         'a', 'b', 'c', 'd', 'e',      'f',        'g', 'h', 'i', 'l', 'm', 'n',
         'o', 'p', 'q', 'r', 's_alta', 's_ending', 't', 'u', 'x'
@@ -313,12 +313,26 @@ def main(unused_argv):
             if nchar_prob < flags.FLAGS.notchar_thr:
                 for pred_ix in top3_pred:
                     prob_dist += char_preds[i][pred_ix]
-                    potential_edges.append((
-                        cc,
-                        all_classes[pred_ix],
-                        char_preds[i][pred_ix],
-                        grouped_segments[i]
-                    ))
+                    if all_classes[pred_ix] == '_curl':
+                        potential_edges.append((
+                            cc,
+                            '0_curl',
+                            char_preds[i][pred_ix],
+                            grouped_segments[i]
+                        ))
+                        potential_edges.append((
+                            cc,
+                            '0_con',
+                            char_preds[i][pred_ix],
+                            grouped_segments[i]
+                        ))
+                    else:
+                        potential_edges.append((
+                            cc,
+                            all_classes[pred_ix],
+                            char_preds[i][pred_ix],
+                            grouped_segments[i]
+                        ))
 
                     if prob_dist > flags.FLAGS.pdist_thr:
                         break
@@ -457,8 +471,8 @@ if __name__ == '__main__':
     flags.DEFINE_float('pdist_thr', 0.8, 'probability distribution pruning threshold')
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
-    flags.DEFINE_string('ocr_dir', 'ocr_model/multiout.hdf5', 'character classifier model folder')
-    flags.DEFINE_string('word_dir', 'word_imgs/riccardo_onlyabbr/200r_150_158_1561_2140/images', 'word image source folder')
-    flags.DEFINE_string('gt_dir', 'word_imgs/riccardo_onlyabbr/200r_150_158_1561_2140/transcriptions', 'ground truth source folder')
+    flags.DEFINE_string('ocr_dir', 'ocr_model/new_multiout.hdf5', 'character classifier model folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/best_segmentation_riccardo/050v_573_280_1344_1805/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/best_segmentation_riccardo/050v_573_280_1344_1805/transcriptions', 'ground truth source folder')
 
     app.run(main)
