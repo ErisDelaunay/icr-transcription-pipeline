@@ -14,6 +14,8 @@ from math import inf
 from evaluation import evaluate_word_accuracy, mrr, correct_transcr_count
 from absl import app, flags
 
+from pprint import pprint
+
 """
 HELPER FUNCTIONS
 """
@@ -80,11 +82,11 @@ def _compute_bbx(stats):
     return x1, y1, x2, y2
 
 
-def _compute_segments_and_centroids(word_img):
+def _compute_segments_and_centroids(word_img, bg_color=(255, 255, 255)):
     hist = cv2.calcHist([word_img], [0, 1, 2], None, [256] * 3, [0, 256] * 3)
     colors = [
         np.array([b, g, r]) for b, g, r in np.argwhere(hist > 0)
-        if (b, g, r) != (255, 255, 255)
+        if (b, g, r) != bg_color
     ]
     centroids = []
     segments = []
@@ -98,7 +100,10 @@ def _compute_segments_and_centroids(word_img):
         h = y2 - y1
 
         if w * h > 9:
-            centroids.append(tuple(ctds[1]))
+            cx, cy = ctds[1]
+            centroids.append(
+                (int(np.rint(cx)), int(np.rint(cy)))
+            )
             segments.append(mask)
 
     return segments, centroids
@@ -210,6 +215,130 @@ def nochar_accuracy(y_true, y_pred):
     # Returns the accuracy of recognizing chars vs. no-chars
     return keras.metrics.binary_accuracy(y_true[:, 0:1], y_pred[:, 0:1])
 
+
+IX2TSC = {
+    0:'b', # with stroke
+    1:'us', # con?
+    2:'d', # with stroke
+    3:'l', # with stroke
+    4:'et',
+    5:'per',
+    6:'pro',
+    7:'qui',
+    8:'rum',
+    9:';',
+    10:'a',
+    11:'b',
+    12:'c',
+    13:'d',
+    14:'e',
+    15:'f',
+    16:'g',
+    17:'h',
+    18:'i',
+    19:'l',
+    20:'m',
+    21:'n',
+    22:'o',
+    23:'p',
+    24:'q',
+    25:'r',
+    26:'s',
+    27:'s',
+    28:'t',
+    29:'u',
+    30:'x'
+}
+
+# layout detection: otsu, crop
+# sul crop: greyscale, binarizzazione
+# line detection, rimozione abbreviazioni
+from collections import OrderedDict
+
+def _edges_from(G, visited, width, ocr_th=0.5, lm_th=0.025):
+    multiedges = []
+    u, _ = visited[-1]
+
+    for v in G.successors(u):
+        ocr_predictions = np.log10(G.get_edge_data(u, v)['preds'])
+        tsc = ''.join(c for _, c in visited)
+        tsc_score = model_LM.score(
+            ' '.join(list(tsc)),
+            bos=False,
+            eos=False
+        )
+
+        if len(G[v]) < 1:
+            lm_predictions = np.array([
+                model_LM.score(
+                    ' '.join(list(tsc + IX2TSC[i] + '#')),
+                    bos=False,
+                    eos=False
+                ) - tsc_score for i in IX2TSC
+            ])
+        else:
+            lm_predictions = np.array([
+                model_LM.score(
+                    ' '.join(list(tsc + IX2TSC[i])),
+                    bos=False,
+                    eos=False
+                ) - tsc_score for i in IX2TSC
+            ])
+
+        # ocr_pred_sort = np.argsort(ocr_predictions)
+        # lm_pred_sort = np.argsort(lm_predictions)
+        #
+        # for i, j in zip(ocr_pred_sort, ocr_pred_sort[1:]):
+        #     delta = ocr_predictions[i] - ocr_predictions[j]
+        #     if delta <
+        #
+        # ocr_pred_mask = ocr_predictions >= np.log10(ocr_th)
+        # lm_pred_mask = lm_predictions >= np.log10(lm_th)
+        #
+        # pred_mask = ocr_pred_mask | lm_pred_mask
+        #
+        # multiedges = itertools.chain(
+        #     multiedges,
+        #     zip(v,
+        #     np.argwhere(pred_mask),
+        #     ocr_predictions[pred_mask],
+        #     lm_predictions[pred_mask])
+        # )
+        #TODO prova esaustiva top 3 con somma e moltiplicazione
+        # isolare set con errori (20-25%)
+        predictions = np.sum([ocr_predictions, lm_predictions], axis=0)
+        multiedges += [(u, v, IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
+
+    multiedges_pruned = sorted(multiedges, key=lambda x: (x[-2], x[-1]), reverse=True)[:width]
+
+    return iter((next, char) for _, next, char, _ in multiedges_pruned)
+
+def paths_beam(G, source, targets, width):
+    visited = OrderedDict.fromkeys([(source, '#')])
+    stack = [_edges_from(G, list(visited), width)] #[iter(G[source])]
+
+    while stack:
+        children = stack[-1]
+        child = next(children, None)
+
+        if child is None:
+            stack.pop()
+            visited.popitem()
+        else:
+            if child in visited:
+                continue
+            if child[0] in targets:
+                yield list(visited) + [child]
+            visited[child] = None
+            if targets - set(visited.keys()):  # expand stack until find all targets
+                stack.append(_edges_from(G, list(visited), width)) # iter(G[child])
+            else:
+                visited.popitem()  # maybe other ways to child
+
+
+
+
+
 """
 APP MAIN
 """
@@ -297,153 +426,127 @@ def main(unused_argv):
         char_preds = tf.nn.softmax(logit_preds[:, 1:], axis=1).numpy()
         notchar_preds = tf.nn.sigmoid(logit_preds[:, :1]).numpy()
 
-        # keep top3 classification results and notchar score
-        top3_preds = [
-            (notchar_preds[ix], np.argsort(p)[::-1][:3]) for ix, p in enumerate(char_preds)
-        ]
-
+        # TODO il codice nuovo va qui:
         # filter segment combinations according to classification
         filtered_combinations = []
-
         for i, cc in enumerate(centroid_ids):
-            prob_dist = 0.0
-            potential_edges = []
-            nchar_prob, top3_pred = top3_preds[i]
-
-            if nchar_prob < flags.FLAGS.notchar_thr:
-                for pred_ix in top3_pred:
-                    prob_dist += char_preds[i][pred_ix]
-                    if all_classes[pred_ix] == '_curl':
-                        potential_edges.append((
-                            cc,
-                            '0_curl',
-                            char_preds[i][pred_ix],
-                            grouped_segments[i]
-                        ))
-                        potential_edges.append((
-                            cc,
-                            '0_con',
-                            char_preds[i][pred_ix],
-                            grouped_segments[i]
-                        ))
-                    else:
-                        potential_edges.append((
-                            cc,
-                            all_classes[pred_ix],
-                            char_preds[i][pred_ix],
-                            grouped_segments[i]
-                        ))
-
-                    if prob_dist > flags.FLAGS.pdist_thr:
-                        break
-
-            for pe in potential_edges:
-                if pe[2] > flags.FLAGS.char_thr:
-                    filtered_combinations.append(pe)
+            if notchar_preds[i] <= flags.FLAGS.notchar_thr:
+                s_mask = np.zeros(grouped_segments[i][0].shape, dtype='uint8')
+                for s in grouped_segments[i]:
+                    s_mask = cv2.bitwise_or(s_mask, s)
+                filtered_combinations.append((cc, char_preds[i], s_mask))
 
         print(
             '{}:\nKept: {} out of {} potential edges ({:.2f}%)'.format(
                 word,
                 len(filtered_combinations),
-                len(centroid_ids) * 3,
-                (len(filtered_combinations) / (len(centroid_ids) * 3)) * 100
+                len(centroid_ids),
+                (len(filtered_combinations)/len(centroid_ids)) * 100
             )
         )
 
         # creation of the word lattice: segment combinations represent
         # edges. Nodes are segments consumed up to a certain point.
-        lattice = nx.MultiDiGraph()
+        lattice = nx.DiGraph()
 
         filtered_combinations = sorted(filtered_combinations, key=lambda x: x[0][0])
-        potential_nodes = [
-            set(sorted_centroids[:i])
-            for i in range(len(sorted_centroids) + 1)
+        filtered_centroids =  sorted({c for ctds, _, _ in filtered_combinations for c in ctds})
+
+        nodes = [
+            set(filtered_centroids[:i])
+            for i in range(len(filtered_centroids) + 1)
+        ]
+        edges = [
+            set(ctds)
+            for ctds, _, _ in filtered_combinations
         ]
 
-        for u, v in itertools.combinations(potential_nodes, 2):
-            edge = v - u
-            for fc, char, prob, segment in filtered_combinations:
-                if set(fc) == edge:
-                    s_mask = np.zeros(segment[0].shape, dtype='uint8')
-                    for s in segment:
-                        s_mask = cv2.bitwise_or(s_mask, s)
-
-                    lattice.add_edge(
-                        tuple(sorted(u)),
-                        tuple(sorted(v)),
-                        transcription=char,
-                        weight=prob,
-                        image=s_mask
-                    )
+        for u, v in itertools.combinations(nodes, 2):
+            if v - u in edges:
+                _, preds, sgmt_img = filtered_combinations[edges.index(v-u)]
+                lattice.add_edge(
+                    tuple(sorted(u)),
+                    tuple(sorted(v)),
+                    preds=preds,
+                    image=sgmt_img
+                )
 
         print("nodes: {},\tedges: {}\n".format(len(lattice.nodes()), len(lattice.edges())))
 
-        # save a .js file with the lattice structure
-        dict_nodes = [
-            str([sorted_centroids.index(c) for c in node])
-            for node in lattice.nodes()
-        ]
+        for path in paths_beam(lattice, sorted(lattice.nodes())[0], {sorted(lattice.nodes())[-1]}, width=3):
+            print(''.join(c for n, c in path))
+            # for u, v in zip(path, path[1:]):
+            #     print(u, '->', v)
+            #     plt.imshow(lattice.get_edge_data(u[0],v[0])['image'])
+            #     plt.show()
 
-        lattice_dict = {
-            'nodes': sorted(dict_nodes, reverse=True),
-            'edges': []
-        }
 
-        graph_as_dict = nx.to_dict_of_dicts(lattice)
-
-        for src_node in graph_as_dict:
-            for dst_node in graph_as_dict[src_node]:
-                labels = ''
-                for edge_ix in graph_as_dict[src_node][dst_node]:
-                    labels += '%s: %.4f\n' % (graph_as_dict[src_node][dst_node][edge_ix]['transcription'],
-                                              graph_as_dict[src_node][dst_node][edge_ix]['weight'])
-                dict_src_node = str([sorted_centroids.index(c) for c in src_node])
-                dict_dst_node = str([sorted_centroids.index(c) for c in dst_node])
-                lattice_dict['edges'].append((dict_src_node, dict_dst_node, labels))
-
-        with open(os.path.join(dag_dir, word.replace('/', '_').split('.')[0] + '.js'), 'w') as f:
-            f.write('var graph = ' + json.dumps(lattice_dict, indent=2))
-
-        # Transcription generation:
-        if len(lattice.nodes()) == 0 or len(lattice.edges()) == 0:
-            all_paths = []
-        else:
-            start = list(lattice.nodes())[np.argmin([len(n) for n in lattice.nodes()])]
-            end = list(lattice.nodes())[np.argmax([len(n) for n in lattice.nodes()])]
-            all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=flags.FLAGS.lm_thr)
-
-        transcriptions = []
-
-        for path, prob in all_paths:
-            transcript = ''
-            w_segmentation = np.zeros(path[0][2]['image'].shape + (3,), dtype='uint8')
-
-            for c_ix, (u, v, data) in enumerate(path):
-                transcript += _map_class_to_chars(data['transcription'])
-
-                data_img = cv2.cvtColor(data['image'], cv2.COLOR_GRAY2RGB)
-                data_img = np.where(data_img == [255, 255, 255],
-                                    clrs[c_ix % len(clrs)],
-                                    [0, 0, 0]
-                                    )
-
-                w_segmentation = w_segmentation + data_img
-
-            if transcript[-2:] == 'b;':
-                transcript = transcript[:-2] + 'bus'
-            if transcript[-2:] == 'q;':
-                transcript = transcript[:-2] + 'que'
-            if len(transcript) * 27 >= word_img_crop.shape[1]:
-                # encode image as string
-                _, buffer = cv2.imencode('.png', w_segmentation)
-                png_as_str = base64.b64encode(buffer)
-                transcriptions.append((prob, transcript, png_as_str))
-
-        transcriptions = sorted(set(transcriptions), reverse=True)
-
-        with open(os.path.join(tsc_dir, word.replace('/', '_').split('.')[0] + '.txt'), 'w') as f:
-            for t in transcriptions:
-                f.write(str(t) + '\n')
+        # # save a .js file with the lattice structure
+        # dict_nodes = [
+        #     str([sorted_centroids.index(c) for c in node])
+        #     for node in lattice.nodes()
+        # ]
+        #
+        # lattice_dict = {
+        #     'nodes': sorted(dict_nodes, reverse=True),
+        #     'edges': []
+        # }
+        #
+        # graph_as_dict = nx.to_dict_of_dicts(lattice)
+        #
+        # for src_node in graph_as_dict:
+        #     for dst_node in graph_as_dict[src_node]:
+        #         labels = ''
+        #         for edge_ix in graph_as_dict[src_node][dst_node]:
+        #             labels += '%s: %.4f\n' % (graph_as_dict[src_node][dst_node][edge_ix]['transcription'],
+        #                                       graph_as_dict[src_node][dst_node][edge_ix]['weight'])
+        #         dict_src_node = str([sorted_centroids.index(c) for c in src_node])
+        #         dict_dst_node = str([sorted_centroids.index(c) for c in dst_node])
+        #         lattice_dict['edges'].append((dict_src_node, dict_dst_node, labels))
+        #
+        # with open(os.path.join(dag_dir, word.replace('/', '_').split('.')[0] + '.js'), 'w') as f:
+        #     f.write('var graph = ' + json.dumps(lattice_dict, indent=2))
+        #
+        # # Transcription generation:
+        # if len(lattice.nodes()) == 0 or len(lattice.edges()) == 0:
+        #     all_paths = []
+        # else:
+        #     start = list(lattice.nodes())[np.argmin([len(n) for n in lattice.nodes()])]
+        #     end = list(lattice.nodes())[np.argmax([len(n) for n in lattice.nodes()])]
+        #     all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=flags.FLAGS.lm_thr)
+        #
+        # transcriptions = []
+        #
+        # for path, preds in all_paths:
+        #     transcript = ''
+        #     w_segmentation = np.zeros(path[0][2]['image'].shape + (3,), dtype='uint8')
+        #
+        #     for c_ix, (u, v, data) in enumerate(path):
+        #         transcript += _map_class_to_chars(data['transcription'])
+        #
+        #         data_img = cv2.cvtColor(data['image'], cv2.COLOR_GRAY2RGB)
+        #         data_img = np.where(data_img == [255, 255, 255],
+        #                             clrs[c_ix % len(clrs)],
+        #                             [0, 0, 0]
+        #                             )
+        #
+        #         w_segmentation = w_segmentation + data_img
+        #
+        #     if transcript[-2:] == 'b;':
+        #         transcript = transcript[:-2] + 'bus'
+        #     if transcript[-2:] == 'q;':
+        #         transcript = transcript[:-2] + 'que'
+        #     if len(transcript) * 27 >= word_img_crop.shape[1]:
+        #         # encode image as string
+        #         _, buffer = cv2.imencode('.png', w_segmentation)
+        #         png_as_str = base64.b64encode(buffer)
+        #         transcriptions.append((preds, transcript, png_as_str))
+        #
+        # transcriptions = sorted(set(transcriptions), reverse=True)
+        #
+        # with open(os.path.join(tsc_dir, word.replace('/', '_').split('.')[0] + '.txt'), 'w') as f:
+        #     for t in transcriptions:
+        #         f.write(str(t) + '\n')
 
     end_time = time()
 
@@ -452,15 +555,15 @@ def main(unused_argv):
     print('time elapsed:', elapsed)
     print(tsc_dir)
 
-    MRR = mrr(tsc_dir, flags.FLAGS.gt_dir)
-    correct_count = correct_transcr_count(tsc_dir, flags.FLAGS.gt_dir)
-    evaluation = evaluate_word_accuracy(tsc_dir, flags.FLAGS.gt_dir)
-    evaluation['mrr'] = MRR
-    evaluation['time'] = elapsed
-    evaluation['correct_overall'] = correct_count
-
-    print(json.dumps(evaluation, indent=2))
-    json.dump(evaluation, open(eval_fnm+'.json','w'), indent=2)
+    # MRR = mrr(tsc_dir, flags.FLAGS.gt_dir)
+    # correct_count = correct_transcr_count(tsc_dir, flags.FLAGS.gt_dir)
+    # evaluation = evaluate_word_accuracy(tsc_dir, flags.FLAGS.gt_dir)
+    # evaluation['mrr'] = MRR
+    # evaluation['time'] = elapsed
+    # evaluation['correct_overall'] = correct_count
+    #
+    # print(json.dumps(evaluation, indent=2))
+    # json.dump(evaluation, open(eval_fnm+'.json','w'), indent=2)
 
 
 if __name__ == '__main__':
