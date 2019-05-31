@@ -255,15 +255,18 @@ IX2TSC = {
 # line detection, rimozione abbreviazioni
 from collections import OrderedDict
 
-def _edges_from(G, visited, width, ocr_th=0.5, lm_th=0.025):
+def _edges_from(G, visited, width):
     multiedges = []
-    u, _ = visited[-1]
+    u, _, _ = visited[-1]
 
     for v in G.successors(u):
         ocr_predictions = np.log10(G.get_edge_data(u, v)['preds'])
-        tsc = ''.join(c for _, c in visited)
+        tsc = ''.join(c for _, c, _ in visited)
+
         tsc_score = model_LM.score(
-            ' '.join(list(tsc)),
+            ' '.join(
+                list(tsc.replace('b;', 'bus').replace('q;', 'que'))
+            ),
             bos=False,
             eos=False
         )
@@ -271,7 +274,9 @@ def _edges_from(G, visited, width, ocr_th=0.5, lm_th=0.025):
         if len(G[v]) < 1:
             lm_predictions = np.array([
                 model_LM.score(
-                    ' '.join(list(tsc + IX2TSC[i] + '#')),
+                    ' '.join(list(
+                        (tsc + IX2TSC[i] + '#').replace('b;', 'bus').replace('q;', 'que')
+                    )),
                     bos=False,
                     eos=False
                 ) - tsc_score for i in IX2TSC
@@ -279,43 +284,25 @@ def _edges_from(G, visited, width, ocr_th=0.5, lm_th=0.025):
         else:
             lm_predictions = np.array([
                 model_LM.score(
-                    ' '.join(list(tsc + IX2TSC[i])),
+                    ' '.join(list(
+                        (tsc + IX2TSC[i]).replace('b;', 'bus').replace('q;', 'que')
+                    )),
                     bos=False,
                     eos=False
                 ) - tsc_score for i in IX2TSC
             ])
 
-        # ocr_pred_sort = np.argsort(ocr_predictions)
-        # lm_pred_sort = np.argsort(lm_predictions)
-        #
-        # for i, j in zip(ocr_pred_sort, ocr_pred_sort[1:]):
-        #     delta = ocr_predictions[i] - ocr_predictions[j]
-        #     if delta <
-        #
-        # ocr_pred_mask = ocr_predictions >= np.log10(ocr_th)
-        # lm_pred_mask = lm_predictions >= np.log10(lm_th)
-        #
-        # pred_mask = ocr_pred_mask | lm_pred_mask
-        #
-        # multiedges = itertools.chain(
-        #     multiedges,
-        #     zip(v,
-        #     np.argwhere(pred_mask),
-        #     ocr_predictions[pred_mask],
-        #     lm_predictions[pred_mask])
-        # )
-        #TODO prova esaustiva top 3 con somma e moltiplicazione
-        # isolare set con errori (20-25%)
+        # TODO prova esaustiva top 3 con somma e moltiplicazione
         predictions = np.sum([ocr_predictions, lm_predictions], axis=0)
-        multiedges += [(u, v, IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
+        multiedges += [(v, IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
 
-    multiedges_pruned = sorted(multiedges, key=lambda x: (x[-2], x[-1]), reverse=True)[:width]
+    multiedges_pruned = sorted(multiedges, key=lambda x: x[-1], reverse=True)[:width]
 
-    return iter((next, char) for _, next, char, _ in multiedges_pruned)
+    return iter(multiedges_pruned)
 
 def paths_beam(G, source, targets, width):
-    visited = OrderedDict.fromkeys([(source, '#')])
-    stack = [_edges_from(G, list(visited), width)] #[iter(G[source])]
+    visited = OrderedDict.fromkeys([(source, '#', 0.0)])
+    stack = [_edges_from(G, list(visited), width)]
 
     while stack:
         children = stack[-1]
@@ -329,13 +316,14 @@ def paths_beam(G, source, targets, width):
                 continue
             if child[0] in targets:
                 yield list(visited) + [child]
+
             visited[child] = None
-            if targets - set(visited.keys()):  # expand stack until find all targets
-                stack.append(_edges_from(G, list(visited), width)) # iter(G[child])
+            visited_nodes = {n for n, _, _ in visited.keys()}
+
+            if targets - visited_nodes:  # expand stack until find all targets
+                stack.append(_edges_from(G, list(visited), width))
             else:
                 visited.popitem()  # maybe other ways to child
-
-
 
 
 
@@ -473,14 +461,6 @@ def main(unused_argv):
 
         print("nodes: {},\tedges: {}\n".format(len(lattice.nodes()), len(lattice.edges())))
 
-        for path in paths_beam(lattice, sorted(lattice.nodes())[0], {sorted(lattice.nodes())[-1]}, width=3):
-            print(''.join(c for n, c in path))
-            # for u, v in zip(path, path[1:]):
-            #     print(u, '->', v)
-            #     plt.imshow(lattice.get_edge_data(u[0],v[0])['image'])
-            #     plt.show()
-
-
         # # save a .js file with the lattice structure
         # dict_nodes = [
         #     str([sorted_centroids.index(c) for c in node])
@@ -515,8 +495,23 @@ def main(unused_argv):
         #     end = list(lattice.nodes())[np.argmax([len(n) for n in lattice.nodes()])]
         #     all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=flags.FLAGS.lm_thr)
         #
-        # transcriptions = []
-        #
+        transcriptions = set()
+
+        for path in paths_beam(
+                lattice,
+                source=sorted(lattice.nodes())[0],
+                targets={sorted(lattice.nodes())[-1]},
+                width=3):
+            transcript = ''
+            prob = 0.0
+            for _, char, score in path:
+                transcript += char
+                prob += score
+            transcript = transcript.replace('b;', 'bus').replace('q;', 'que')
+            transcriptions.add((prob, transcript, str(path)))
+
+        transcriptions = sorted(transcriptions, reverse=True)
+
         # for path, preds in all_paths:
         #     transcript = ''
         #     w_segmentation = np.zeros(path[0][2]['image'].shape + (3,), dtype='uint8')
@@ -544,9 +539,9 @@ def main(unused_argv):
         #
         # transcriptions = sorted(set(transcriptions), reverse=True)
         #
-        # with open(os.path.join(tsc_dir, word.replace('/', '_').split('.')[0] + '.txt'), 'w') as f:
-        #     for t in transcriptions:
-        #         f.write(str(t) + '\n')
+        with open(os.path.join(tsc_dir, word.replace('/', '_').split('.')[0] + '.txt'), 'w') as f:
+            for t in transcriptions:
+                f.write(str(t) + '\n')
 
     end_time = time()
 
@@ -555,15 +550,15 @@ def main(unused_argv):
     print('time elapsed:', elapsed)
     print(tsc_dir)
 
-    # MRR = mrr(tsc_dir, flags.FLAGS.gt_dir)
-    # correct_count = correct_transcr_count(tsc_dir, flags.FLAGS.gt_dir)
-    # evaluation = evaluate_word_accuracy(tsc_dir, flags.FLAGS.gt_dir)
-    # evaluation['mrr'] = MRR
-    # evaluation['time'] = elapsed
-    # evaluation['correct_overall'] = correct_count
-    #
-    # print(json.dumps(evaluation, indent=2))
-    # json.dump(evaluation, open(eval_fnm+'.json','w'), indent=2)
+    MRR = mrr(tsc_dir, flags.FLAGS.gt_dir)
+    correct_count = correct_transcr_count(tsc_dir, flags.FLAGS.gt_dir)
+    evaluation = evaluate_word_accuracy(tsc_dir, flags.FLAGS.gt_dir)
+    evaluation['mrr'] = MRR
+    evaluation['time'] = elapsed
+    evaluation['correct_overall'] = correct_count
+
+    print(json.dumps(evaluation, indent=2))
+    json.dump(evaluation, open(eval_fnm+'.json','w'), indent=2)
 
 
 if __name__ == '__main__':
@@ -575,7 +570,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
     flags.DEFINE_string('ocr_dir', 'ocr_model/new_multiout.hdf5', 'character classifier model folder')
-    flags.DEFINE_string('word_dir', 'word_imgs/best_segmentation_riccardo/050v_573_280_1344_1805/images', 'word image source folder')
-    flags.DEFINE_string('gt_dir', 'word_imgs/best_segmentation_riccardo/050v_573_280_1344_1805/transcriptions', 'ground truth source folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/no_correct/050v/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/no_correct/050v/transcriptions', 'ground truth source folder')
 
     app.run(main)

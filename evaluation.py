@@ -20,7 +20,7 @@ def _remove_abbreviations(word):
             .replace('p(ro)', 'pro')
             .replace('q(ui)', 'qui')
             .replace('q(ue)', 'que')
-            .replace('(us)', 'us')
+            .replace('b(us)', 'bus')
             .replace('-', '')
             .replace(',', '')
             .replace('.', '')
