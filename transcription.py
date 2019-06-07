@@ -250,59 +250,62 @@ IX2TSC = {
     30:'x'
 }
 
-# layout detection: otsu, crop
-# sul crop: greyscale, binarizzazione
-# line detection, rimozione abbreviazioni
 from collections import OrderedDict
 
-def _edges_from(G, visited, width):
+def _edges_from(G, visited, width, lm_th):
     multiedges = []
     u, _, _ = visited[-1]
 
-    for v in G.successors(u):
-        ocr_predictions = np.log10(G.get_edge_data(u, v)['preds'])
-        tsc = ''.join(c for _, c, _ in visited)
+    prob = np.sum(score for _, _, score in visited)
 
-        tsc_score = model_LM.score(
-            ' '.join(
-                list(tsc.replace('b;', 'bus').replace('q;', 'que'))
-            ),
-            bos=False,
-            eos=False
-        )
+    if prob > lm_th:
+        for v in G.successors(u):
+            ocr_predictions = np.log10(G.get_edge_data(u, v)['preds'])
+            tsc = ''.join(c for _, c, _ in visited)
 
-        if len(G[v]) < 1:
-            lm_predictions = np.array([
-                model_LM.score(
-                    ' '.join(list(
-                        (tsc + IX2TSC[i] + '#').replace('b;', 'bus').replace('q;', 'que')
-                    )),
-                    bos=False,
-                    eos=False
-                ) - tsc_score for i in IX2TSC
-            ])
-        else:
-            lm_predictions = np.array([
-                model_LM.score(
-                    ' '.join(list(
-                        (tsc + IX2TSC[i]).replace('b;', 'bus').replace('q;', 'que')
-                    )),
-                    bos=False,
-                    eos=False
-                ) - tsc_score for i in IX2TSC
-            ])
+            tsc_score = model_LM.score(
+                ' '.join(
+                    list(tsc.replace('b;', 'bus').replace('q;', 'que'))
+                ),
+                bos=False,
+                eos=False
+            )
 
-        # TODO prova esaustiva top 3 con somma e moltiplicazione
-        predictions = np.sum([ocr_predictions, lm_predictions], axis=0)
-        multiedges += [(v, IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
+            if len(G[v]) < 1:
+                lm_predictions = np.array([
+                    model_LM.score(
+                        ' '.join(list(
+                            (tsc + IX2TSC[i] + '#').replace('b;', 'bus').replace('q;', 'que')
+                        )),
+                        bos=False,
+                        eos=False
+                    ) - tsc_score for i in IX2TSC
+                ])
+            else:
+                lm_predictions = np.array([
+                    model_LM.score(
+                        ' '.join(list(
+                            (tsc + IX2TSC[i]).replace('b;', 'bus').replace('q;', 'que')
+                        )),
+                        bos=False,
+                        eos=False
+                    ) - tsc_score for i in IX2TSC
+                ])
 
-    multiedges_pruned = sorted(multiedges, key=lambda x: x[-1], reverse=True)[:width]
+            predictions = np.sum(
+                [ocr_predictions, lm_predictions],
+                axis=0
+            )
+            multiedges += [(v, IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
 
-    return iter(multiedges_pruned)
+        multiedges = sorted(multiedges, key=lambda x: x[-1], reverse=True)[:width]
 
-def paths_beam(G, source, targets, width):
+    return iter(multiedges)
+
+
+def paths_beam(G, source, targets, width, lm_th):
     visited = OrderedDict.fromkeys([(source, '#', 0.0)])
-    stack = [_edges_from(G, list(visited), width)]
+    stack = [_edges_from(G, list(visited), width, lm_th)]
 
     while stack:
         children = stack[-1]
@@ -321,7 +324,7 @@ def paths_beam(G, source, targets, width):
             visited_nodes = {n for n, _, _ in visited.keys()}
 
             if targets - visited_nodes:  # expand stack until find all targets
-                stack.append(_edges_from(G, list(visited), width))
+                stack.append(_edges_from(G, list(visited), width, lm_th))
             else:
                 visited.popitem()  # maybe other ways to child
 
@@ -414,7 +417,6 @@ def main(unused_argv):
         char_preds = tf.nn.softmax(logit_preds[:, 1:], axis=1).numpy()
         notchar_preds = tf.nn.sigmoid(logit_preds[:, :1]).numpy()
 
-        # TODO il codice nuovo va qui:
         # filter segment combinations according to classification
         filtered_combinations = []
         for i, cc in enumerate(centroid_ids):
@@ -486,59 +488,27 @@ def main(unused_argv):
         #
         # with open(os.path.join(dag_dir, word.replace('/', '_').split('.')[0] + '.js'), 'w') as f:
         #     f.write('var graph = ' + json.dumps(lattice_dict, indent=2))
-        #
-        # # Transcription generation:
-        # if len(lattice.nodes()) == 0 or len(lattice.edges()) == 0:
-        #     all_paths = []
-        # else:
-        #     start = list(lattice.nodes())[np.argmin([len(n) for n in lattice.nodes()])]
-        #     end = list(lattice.nodes())[np.argmax([len(n) for n in lattice.nodes()])]
-        #     all_paths = multidag_dfs_kenlm(lattice, start, end, threshold=flags.FLAGS.lm_thr)
-        #
+
+        # Transcription generation:
         transcriptions = set()
 
-        for path in paths_beam(
-                lattice,
-                source=sorted(lattice.nodes())[0],
-                targets={sorted(lattice.nodes())[-1]},
-                width=3):
-            transcript = ''
-            prob = 0.0
-            for _, char, score in path:
-                transcript += char
-                prob += score
-            transcript = transcript.replace('b;', 'bus').replace('q;', 'que')
-            transcriptions.add((prob, transcript, str(path)))
+        if len(lattice.nodes()) > 0:
+            for path in paths_beam(
+                    lattice,
+                    source=sorted(lattice.nodes())[0],
+                    targets={sorted(lattice.nodes())[-1]},
+                    width=3,
+                    lm_th=flags.FLAGS.lm_thr):
+                transcript = ''
+                prob = 0.0
+                for _, char, score in path[1:]:
+                    transcript += char
+                    prob += score
+                transcript = transcript.replace('b;', 'bus').replace('q;', 'que')
+                transcriptions.add((prob, transcript, str(path)))
 
         transcriptions = sorted(transcriptions, reverse=True)
 
-        # for path, preds in all_paths:
-        #     transcript = ''
-        #     w_segmentation = np.zeros(path[0][2]['image'].shape + (3,), dtype='uint8')
-        #
-        #     for c_ix, (u, v, data) in enumerate(path):
-        #         transcript += _map_class_to_chars(data['transcription'])
-        #
-        #         data_img = cv2.cvtColor(data['image'], cv2.COLOR_GRAY2RGB)
-        #         data_img = np.where(data_img == [255, 255, 255],
-        #                             clrs[c_ix % len(clrs)],
-        #                             [0, 0, 0]
-        #                             )
-        #
-        #         w_segmentation = w_segmentation + data_img
-        #
-        #     if transcript[-2:] == 'b;':
-        #         transcript = transcript[:-2] + 'bus'
-        #     if transcript[-2:] == 'q;':
-        #         transcript = transcript[:-2] + 'que'
-        #     if len(transcript) * 27 >= word_img_crop.shape[1]:
-        #         # encode image as string
-        #         _, buffer = cv2.imencode('.png', w_segmentation)
-        #         png_as_str = base64.b64encode(buffer)
-        #         transcriptions.append((preds, transcript, png_as_str))
-        #
-        # transcriptions = sorted(set(transcriptions), reverse=True)
-        #
         with open(os.path.join(tsc_dir, word.replace('/', '_').split('.')[0] + '.txt'), 'w') as f:
             for t in transcriptions:
                 f.write(str(t) + '\n')
@@ -560,6 +530,23 @@ def main(unused_argv):
     print(json.dumps(evaluation, indent=2))
     json.dump(evaluation, open(eval_fnm+'.json','w'), indent=2)
 
+# con moltiplicazione:
+# 050v 0.34 mrr: 0.17
+# 100r 0.39 mrr: 0.25
+# 150v 0.29 mrr: 0.12
+# 200r 0.45 mrr: 0.27
+
+# su tutta la pagina:
+# 050v: 0.80 mrr: 0.62
+# 100r: 0.79 mrr: 0.64
+# 150v: 0.79 mrr: 0.63
+# 200r: 0.81 mrr: 0.67
+
+# con addizione:
+# 050v 0.24
+# 100r 0.26
+# 150v 0.18
+# 200r 0.26
 
 if __name__ == '__main__':
     flags.DEFINE_integer('n_gram', 6, 'Language Model order')
@@ -570,7 +557,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
     flags.DEFINE_string('ocr_dir', 'ocr_model/new_multiout.hdf5', 'character classifier model folder')
-    flags.DEFINE_string('word_dir', 'word_imgs/no_correct/050v/images', 'word image source folder')
-    flags.DEFINE_string('gt_dir', 'word_imgs/no_correct/050v/transcriptions', 'ground truth source folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/segmentazione/200r_150_158_1561_2140/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/segmentazione/200r_150_158_1561_2140/transcriptions', 'ground truth source folder')
 
     app.run(main)
