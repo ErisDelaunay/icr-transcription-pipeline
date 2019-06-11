@@ -14,17 +14,25 @@ def _remove_abbreviations(word):
         r"\(.*?\)|\'.*?\'", 
         "", 
         word.lower()
-            .replace('(et)', 'et')
-            .replace('(rum)', 'rum')
+            .replace('v', 'u')
+            .replace('j', 'i')
+            .replace('r(um)', 'rum')
             .replace('p(er)', 'per')
             .replace('p(ro)', 'pro')
             .replace('q(ui)', 'qui')
             .replace('q(ue)', 'que')
             .replace('b(us)', 'bus')
+            .replace('(rum)', 'rum')
+            .replace('(per)', 'per')
+            .replace('(pro)', 'pro')
+            .replace('(qui)', 'qui')
+            .replace('(que)', 'que')
+            .replace('(bus)', 'bus')
+            .replace('(con)', 'con')
+            .replace('(et)', 'et')
             .replace('-', '')
             .replace(',', '')
             .replace('.', '')
-            .replace('v', 'u')
     )
     return tsc
 

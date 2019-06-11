@@ -218,7 +218,7 @@ def nochar_accuracy(y_true, y_pred):
 
 IX2TSC = {
     0:'b', # with stroke
-    1:'us', # con?
+    1:'con', # con?
     2:'d', # with stroke
     3:'l', # with stroke
     4:'et',
@@ -265,7 +265,7 @@ def _edges_from(G, visited, width, lm_th):
 
             tsc_score = model_LM.score(
                 ' '.join(
-                    list(tsc.replace('b;', 'bus').replace('q;', 'que'))
+                    list(tsc.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que'))
                 ),
                 bos=False,
                 eos=False
@@ -275,7 +275,7 @@ def _edges_from(G, visited, width, lm_th):
                 lm_predictions = np.array([
                     model_LM.score(
                         ' '.join(list(
-                            (tsc + IX2TSC[i] + '#').replace('b;', 'bus').replace('q;', 'que')
+                            (tsc + IX2TSC[i] + '#').replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
                         )),
                         bos=False,
                         eos=False
@@ -285,7 +285,7 @@ def _edges_from(G, visited, width, lm_th):
                 lm_predictions = np.array([
                     model_LM.score(
                         ' '.join(list(
-                            (tsc + IX2TSC[i]).replace('b;', 'bus').replace('q;', 'que')
+                            (tsc + IX2TSC[i]).replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
                         )),
                         bos=False,
                         eos=False
@@ -504,7 +504,8 @@ def main(unused_argv):
                 for _, char, score in path[1:]:
                     transcript += char
                     prob += score
-                transcript = transcript.replace('b;', 'bus').replace('q;', 'que')
+                transcript = transcript.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
+                transcript = transcript.strip(';')
                 transcriptions.add((prob, transcript, str(path)))
 
         transcriptions = sorted(transcriptions, reverse=True)
@@ -536,17 +537,22 @@ def main(unused_argv):
 # 150v 0.29 mrr: 0.12
 # 200r 0.45 mrr: 0.27
 
+
+
 # su tutta la pagina:
 # 050v: 0.80 mrr: 0.62
 # 100r: 0.79 mrr: 0.64
 # 150v: 0.79 mrr: 0.63
 # 200r: 0.81 mrr: 0.67
 
-# con addizione:
-# 050v 0.24
-# 100r 0.26
-# 150v 0.18
-# 200r 0.26
+# slvr: 0.92 mrr: 0.81
+
+# 042v: 0.81 mrr: 0.71
+# 043r: 0.77 mrr: 0.64
+# 043v: 0.80 mrr: 0.65
+# 044r: 0.83 mrr: 0.68
+# 044v: 0.81 mrr: 0.64
+
 
 if __name__ == '__main__':
     flags.DEFINE_integer('n_gram', 6, 'Language Model order')
@@ -557,7 +563,7 @@ if __name__ == '__main__':
     flags.DEFINE_integer('alt_top_n', 0, 'top n transcriptions to submit to alternative generation')
     flags.DEFINE_string('lm_dir', 'lm_model', 'Language model folder')
     flags.DEFINE_string('ocr_dir', 'ocr_model/new_multiout.hdf5', 'character classifier model folder')
-    flags.DEFINE_string('word_dir', 'word_imgs/segmentazione/200r_150_158_1561_2140/images', 'word image source folder')
-    flags.DEFINE_string('gt_dir', 'word_imgs/segmentazione/200r_150_158_1561_2140/transcriptions', 'ground truth source folder')
+    flags.DEFINE_string('word_dir', 'word_imgs/042r_044v/044v_587_236_1355_1808/images', 'word image source folder')
+    flags.DEFINE_string('gt_dir', 'word_imgs/042r_044v/044v_587_236_1355_1808/transcriptions', 'ground truth source folder')
 
     app.run(main)
