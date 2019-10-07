@@ -4,3 +4,5 @@ tensorflow>=1.12.1
 kenlm<=0.0.0
 networkx<=2.2
 editdistance<=0.5.2
+absl-py<=0.8.0
+matplotlib<=3.1.1

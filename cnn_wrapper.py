@@ -1,5 +1,6 @@
 import tensorflow as tf
-from tensorflow.python import keras
+import numpy as np
+from tensorflow import keras
 
 
 def custom_loss(y_true, y_pred):
@@ -45,6 +46,8 @@ class CNN:
     def predict(self, X_test):
         logit_preds = self.classifier.predict(X_test)
         char_preds = tf.nn.softmax(logit_preds[:, 1:], axis=1).numpy()
+        zeros = np.zeros((char_preds.shape[0], 1), dtype='float32') # classe fittizia spazio
+        char_preds = np.hstack((char_preds, zeros))
         notchar_preds = tf.nn.sigmoid(logit_preds[:, :1]).numpy()
         return char_preds, notchar_preds
 

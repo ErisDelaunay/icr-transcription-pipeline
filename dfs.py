@@ -3,7 +3,7 @@ import kenlm
 from collections import OrderedDict
 
 
-class DFS:
+class WordDFS:
     IX2TSC = {
         0: 'b',  # with stroke
         1: 'con',  # con?
@@ -35,7 +35,39 @@ class DFS:
         27: 's',
         28: 't',
         29: 'u',
-        30: 'x'
+        30: 'x',
+        31: '#',
+        # 32: 'b#',  # with stroke
+        # 33: 'con#',  # con?
+        # 34: 'd#',  # with stroke
+        # 35: 'l#',  # with stroke
+        # 36: 'et#',
+        # 37: 'per#',
+        # 38: 'pro#',
+        # 39: 'qui#',
+        # 40: 'rum#',
+        # 41: ';#',
+        # 42: 'a#',
+        # 43: 'b#',
+        # 44: 'c#',
+        # 45: 'd#',
+        # 46: 'e#',
+        # 47: 'f#',
+        # 48: 'g#',
+        # 49: 'h#',
+        # 50: 'i#',
+        # 51: 'l#',
+        # 52: 'm#',
+        # 53: 'n#',
+        # 54: 'o#',
+        # 55: 'p#',
+        # 56: 'q#',
+        # 57: 'r#',
+        # 58: 's#',
+        # 59: 's#',
+        # 60: 't#',
+        # 61: 'u#',
+        # 62: 'x#',
     }
 
     # IX2TSC = {
@@ -117,17 +149,100 @@ class DFS:
                     ])
 
                 predictions = np.sum(
-                    [ocr_predictions, lm_predictions],
+                    [ocr_predictions, lm_predictions], # np.hstack((ocr_predictions, ocr_predictions[:-1]))
                     axis=0
                 )
                 multiedges += [(v, self.IX2TSC[tsc_ix], pred) for tsc_ix, pred in enumerate(predictions)]
 
-            multiedges = sorted(multiedges, key=lambda x: x[-1], reverse=True)[:width]
+            multiedges = sorted(multiedges, key=lambda x: x[-1], reverse=True)
+            multiedges = multiedges[:width]
 
         return iter(multiedges)
 
     def paths_beam(self, G, source, targets, width, lm_th):
         visited = OrderedDict.fromkeys([(source, '#', 0.0)])
+        stack = [self._edges_from(G, list(visited), width, lm_th)]
+
+        while stack:
+            children = stack[-1]
+            child = next(children, None)
+
+            if child is None:
+                stack.pop()
+                visited.popitem()
+            else:
+                if child in visited:
+                    continue
+                if child[0] in targets:
+                    yield list(visited) + [child]
+
+                visited[child] = None
+                visited_nodes = {n for n, _, _ in visited.keys()}
+
+                if targets - visited_nodes:  # expand stack until find all targets
+                    stack.append(self._edges_from(G, list(visited), width, lm_th))
+                else:
+                    visited.popitem()  # maybe other ways to child
+
+
+class LineDFS:
+    def __init__(self, word_dfs):
+        self.wdfs = word_dfs
+
+    def _edges_from(self, G, visited, width, lm_th):
+        multiedges = []
+        u, _, _ = visited[-1]
+
+        prob_so_far = np.sum(score for _, _, score in visited)
+        tsc_so_far = '#'.join(t for _, t, _ in visited)
+
+        # print(prob_so_far, '\t',tsc_so_far)
+
+        if prob_so_far > -35.0:
+            for v in G.successors(u):
+                transcriptions = set()
+                wg = G[u][v]['word_graph']
+
+                for path in self.wdfs.paths_beam(
+                        wg,
+                        source=sorted(wg.nodes())[0],
+                        targets={sorted(wg.nodes())[-1]},
+                        width=3,
+                        lm_th=lm_th):
+                    transcript = ''
+                    prob = 0.0
+                    for _, char, score in path[1:]:
+                        transcript += char
+                        prob += score
+                    transcript = transcript.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
+                    transcript = transcript.strip(';')
+
+                    transcriptions.add((prob, transcript))
+
+                transcriptions = sorted(transcriptions, reverse=True)
+                transcriptions_filtered = []
+
+                for w in transcriptions:
+                    if len(transcriptions_filtered) > 0:
+                        _, tfil = zip(*transcriptions_filtered)
+                    else:
+                        tfil = []
+                    if w[1] not in tfil:
+                        transcriptions_filtered.append(w)
+
+                for _, tsc in transcriptions_filtered[:3]:
+                    tsc_score = self.wdfs.lm.score(
+                        ' '.join(list(tsc_so_far+'#'+tsc)), bos=False, eos=False
+                    ) - prob_so_far
+                    multiedges.append((v, tsc, tsc_score))
+
+            multiedges = sorted(multiedges, key=lambda x: x[-1], reverse=True)
+            multiedges = multiedges[:width]
+
+        return iter(multiedges)
+
+    def paths_beam(self, G, source, targets, width, lm_th):
+        visited = OrderedDict.fromkeys([(source, '', 0.0)])
         stack = [self._edges_from(G, list(visited), width, lm_th)]
 
         while stack:
