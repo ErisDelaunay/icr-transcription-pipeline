@@ -1,10 +1,8 @@
 import cv2
 import numpy as np
-import find_text_area as ta
-import binarization as bin
-import word_segmentation as ws
+from utils import word_segmentation as ws, binarization as bin, find_text_area as ta
 from cnn_wrapper import CNN
-from dfs import DFS
+from dfs import WordDFS
 
 
 def page_to_words(path):
@@ -74,7 +72,7 @@ if __name__ == '__main__':
     lines = page_to_lines(ws_page)
 
     icr_classifier = CNN('')
-    dfs = DFS('')
+    dfs = WordDFS('')
 
     for line in lines:
         for _, _, color in line:

@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from tqdm import tqdm
-import binarization
+from utils import binarization
 from random import randint
 # from matplotlib import pyplot as plt
 
@@ -45,14 +45,14 @@ def find_words_add_8_binarization(binary_img,img_gray):
 			h = h+2
 		binary_word = img_and[y:y+h,x:x+w]
 		gray_word = (img_gray[y:y+h,x:x+w])
-		binary_word = binarization.add_8_simple(binary_word,gray_word)
+		binary_word = binarization.add_8_simple(binary_word, gray_word)
 
 		img_and[y:y+h,x:x+w] = binary_word
 
 
 		new_img = cv2.bitwise_or(new_img, img_and)
 
-	new_img = binarization.remove_small_component_and_abbreviations(new_img,8)
+	new_img = binarization.remove_small_component_and_abbreviations(new_img, 8)
 	return new_img
 
 

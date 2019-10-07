@@ -4,6 +4,7 @@ import re
 from math import inf
 from collections import defaultdict
 import editdistance as ed
+import pathlib
 
 
 GT_FOLDER = 'correct_transcriptions'
@@ -11,7 +12,7 @@ GT_FOLDER = 'correct_transcriptions'
 
 def _remove_abbreviations(word):
     tsc = re.sub(
-        r"\(.*?\)|\'.*?\'", 
+        r"\(.*?\)|\'.*?\'|\[.*?\]|\{.*?\}",
         "", 
         word.lower()
             .replace('v', 'u')
@@ -102,3 +103,88 @@ def correct_transcr_count(gen_folder, gt_folder=GT_FOLDER):
             correct_transcr += 1
     
     return correct_transcr/len(fnms)
+
+import json
+if __name__ == '__main__':
+    tsc_folder = pathlib.Path('evals/eval_multiout-0.4/043r_206_219_1382_1832/tsc')
+
+    eds = []
+    for tsc_path in tsc_folder.glob('*'):
+        gt_path = pathlib.Path(
+            'word_imgs/all_pages_clean/' + tsc_path.parts[-3] + '/transcriptions/' + tsc_path.name
+        )
+
+        with tsc_path.open('r') as f:
+            top1 = f.readline()
+        with gt_path.open('r') as g:
+            gt_tsc = _remove_abbreviations(g.readline())
+
+        if len(top1) > 0:
+            _, gen_tsc, _ = ast.literal_eval(top1)
+        else:
+            gen_tsc = ''
+
+        eval_ed = ed.eval(gen_tsc, gt_tsc)
+        print(gen_tsc, gt_tsc)
+        print(eval_ed)
+        eds.append(eval_ed)
+
+    eds += [6]*30
+    print(len(eds))
+    print(sum(eds) / len(eds))
+
+
+    # tsc_json = json.load(open('tesseract_evaluation.json', 'r'))
+    #
+    # ixs_by_y = zip(
+    #     sorted(tsc_json['lines'].keys(), key=lambda x: int(x)),
+    #     sorted(tsc_folder.glob('*'), key=lambda x: int(x.stem.split('_')[1]))
+    # )
+    #
+    # # tscs_by_y = sorted(tsc_folder.glob('*'), key=lambda p: int(p.stem.split('_')[1]))
+    # #
+    # lines = []
+    # line = []
+    # prev_y = 0
+    # line_size = 30
+    # for ix, t in ixs_by_y:
+    #     cur_y = int(t.stem.split('_')[1])
+    #     if (cur_y - prev_y >= line_size) and len(line)>0:
+    #         lines.append(line)
+    #         line = []
+    #     line.append((ix, t))
+    #     prev_y = cur_y
+    #
+    # lines = [sorted(l, key=lambda p: int(p[1].stem.split('_')[0])) for l in lines]
+    #
+    # genvsgt_tscs = []
+    # for l in lines:
+    #     gen_line_tsc = ''
+    #     gt_line_tsc = ''
+    #     for ix, _ in l:
+    #         gen_tsc = tsc_json['lines'][ix]['pred']
+    #         gen_line_tsc += gen_tsc + ' '
+    #         gt_tsc = tsc_json['lines'][ix]['gt']
+    #         gt_line_tsc += gt_tsc + ' '
+    #     genvsgt_tscs.append((gen_line_tsc, gt_line_tsc))
+    #
+    #
+    # # # with open('tsc_040r_195_275_1355_1807.txt', 'r') as tsc:
+    # # #     gen_tscs = tsc.readlines()
+    # #
+    # # with open('200r.txt', 'r') as gt:
+    # #     gt_tscs = gt.readlines()
+    # #
+    # eds = []
+    #
+    # for gen_line, gt_line in genvsgt_tscs:
+    #     # gt_line = _remove_abbreviations(gt_line)
+    #     # gt_line = ' '.join(gt_line.split())
+    #     eval_ed = ed.eval(gen_line, gt_line)
+    #     print(gen_line.strip())
+    #     print(gt_line.strip())
+    #     print(eval_ed)
+    #     print()
+    #     eds.append(eval_ed)
+    #
+    # print(sum(eds)/len(eds))
