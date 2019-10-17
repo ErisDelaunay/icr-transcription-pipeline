@@ -1,6 +1,7 @@
 import os
 import ast
 import re
+import json
 from math import inf
 from collections import defaultdict
 import editdistance as ed
@@ -104,36 +105,50 @@ def correct_transcr_count(gen_folder, gt_folder=GT_FOLDER):
     
     return correct_transcr/len(fnms)
 
-import json
-if __name__ == '__main__':
-    tsc_folder = pathlib.Path('evals/eval_multiout-0.4/043r_206_219_1382_1832/tsc')
+def evaluate_full_transcriptions(gen_dir, gt_dir):
+    tsc_folder = pathlib.Path(gen_dir)
+
+    evaluation = dict()
 
     eds = []
     for tsc_path in tsc_folder.glob('*'):
-        gt_path = pathlib.Path(
-            'word_imgs/all_pages_clean/' + tsc_path.parts[-3] + '/transcriptions/' + tsc_path.name
-        )
+        print()
+        print(tsc_path)
+        evaluation[tsc_path.stem] = defaultdict(dict)
+        gt_path = pathlib.Path(gt_dir) / (tsc_path.stem.split('_')[0] + '.txt')
 
         with tsc_path.open('r') as f:
-            top1 = f.readline()
+            gen_lines = f.readlines()
         with gt_path.open('r') as g:
-            gt_tsc = _remove_abbreviations(g.readline())
+            gt_lines = g.readlines()
 
-        if len(top1) > 0:
-            _, gen_tsc, _ = ast.literal_eval(top1)
-        else:
-            gen_tsc = ''
+        page_eds = []
 
-        eval_ed = ed.eval(gen_tsc, gt_tsc)
-        print(gen_tsc, gt_tsc)
-        print(eval_ed)
-        eds.append(eval_ed)
+        for i, (gen_line, gt_line) in enumerate(zip(gen_lines, gt_lines)):
+            gen_line, gt_line = gen_line.strip(), _remove_abbreviations(gt_line.strip())
+            eval_ed = ed.eval(gen_line, gt_line)
 
-    eds += [6]*30
+            evaluation[tsc_path.stem][i]['gt'] = gt_line
+            evaluation[tsc_path.stem][i]['gen'] = gen_line
+            evaluation[tsc_path.stem][i]['ed'] = eval_ed
+            print(gen_line)
+            print(gt_line)
+            print(eval_ed)
+            eds.append(eval_ed)
+            page_eds.append(eval_ed)
+
+        evaluation[tsc_path.stem]['avg_page_ed'] = sum(page_eds) / len(page_eds)
+
     print(len(eds))
     print(sum(eds) / len(eds))
 
+    evaluation['avg_tot_ed'] = sum(eds) / len(eds)
 
+    json.dump(evaluation, open('full_tsc_eval.json', 'w'), indent=2)
+
+
+if __name__ == '__main__':
+    evaluate_full_transcriptions('page_transcriptions_20_test4', 'page_transcriptions_gt')
     # tsc_json = json.load(open('tesseract_evaluation.json', 'r'))
     #
     # ixs_by_y = zip(
