@@ -3,15 +3,16 @@ import ast
 import re
 import json
 from math import inf
-from collections import defaultdict
+from collections import defaultdict, Counter, OrderedDict
 import editdistance as ed
 import pathlib
+import difflib
 
 
 GT_FOLDER = 'correct_transcriptions'
 
 
-def _remove_abbreviations(word):
+def _remove_abbreviations_icr(word):
     tsc = re.sub(
         r"\(.*?\)|\'.*?\'|\[.*?\]|\{.*?\}",
         "", 
@@ -38,6 +39,75 @@ def _remove_abbreviations(word):
     )
     return tsc
 
+def _remove_abbreviations_tess(word):
+    tsc = re.sub(
+        r"\(.*?\)|\'.*?\'|\[.*?\]|\{.*?\}",
+        "",
+        word.replace('s ', '6 ') \
+            .replace('s.', '6.') \
+            .replace('s' + '\n', '6' + '\n') \
+            .replace('d(is)', '$') \
+            .replace('d(u)', '$') \
+            .replace('d(um)', '$') \
+            .replace('(uo)d', '$') \
+            .replace('d(inis)', '$') \
+            .replace('d(iaconus)', '$') \
+            .replace('d(em)', '$') \
+            .replace('d(as)', '$') \
+            .replace('d(inali)', '$') \
+            .replace('q(uod)', '%') \
+            .replace('(quod)', '%') \
+            .replace('b(is)', '0') \
+            .replace('b(er)', '0') \
+            .replace('(res)b', '0') \
+            .replace('b(ris)', '0') \
+            .replace('b(at)', '0') \
+            .replace('b(ate)', '0e') \
+            .replace('r(um)', '1') \
+            .replace('p(er)', '2') \
+            .replace('p(ropter)', '22') \
+            .replace('p(ar)', '2') \
+            .replace('p(ro)', '3p') \
+            .replace('q(ui)', '4') \
+            .replace('q(uem)', '4') \
+            .replace('q(ue)', 'q5') \
+            .replace('b(us)', 'b5') \
+            .replace('l(er)', '8') \
+            .replace('l(es)', '8') \
+            .replace('(e)l', '8') \
+            .replace('(osto)l', '8') \
+            .replace('l(endis)', '8') \
+            .replace('l(endas)', '8') \
+            .replace('l(ius)', '8') \
+            .replace('l(ite)', '8') \
+            .replace('(u)l', '8') \
+            .replace('l(ecti)', '8') \
+            .replace('l(ii)', '8') \
+            .replace('l(esi)', '8') \
+            .replace('l(is)', '8') \
+            .replace('l(ectus)', '8') \
+            .replace('li(ite)', '8') \
+            .replace('l(ur)', '8') \
+            .replace('XPO', 'Xo') \
+            .replace('(Christ)', 'X')
+            .replace('(rum)', '1') \
+            .replace('(per)', '2') \
+            .replace('(par)', '2') \
+            .replace('(pro)', '3p') \
+            .replace('(qui)', '4') \
+            .replace('(que)', 'q5') \
+            .replace('(bus)', 'b5') \
+            .replace('(it)', '5') \
+            .replace('(ed)', '5') \
+            .replace('(et)', '7') \
+            .replace('(ur)', '9') \
+            .replace('(uius)', '9') \
+            .replace('(imus)', '9') \
+            .replace('(mus)', '9') \
+            .replace('(us)', '9')
+    )
+    return tsc
+
 
 def mrr(gen_folder, gt_folder=GT_FOLDER):
     words_filenames = os.listdir(gt_folder)
@@ -47,7 +117,7 @@ def mrr(gen_folder, gt_folder=GT_FOLDER):
 
     for w_fnm in words_filenames:
         with open(os.path.join(gt_folder, w_fnm), 'r') as gt_file:
-            gt_word = _remove_abbreviations(gt_file.readline().strip())
+            gt_word = _remove_abbreviations_icr(gt_file.readline().strip())
         with open(os.path.join(gen_folder, w_fnm), 'r') as gen_file:
             gen_words = [ast.literal_eval(w.strip())[1] for w in gen_file.readlines()]
 
@@ -75,7 +145,7 @@ def evaluate_word_accuracy(gen_folder, gt_folder=GT_FOLDER):
             correct = 0
             for w_fnm in words_filenames:
                 with open(os.path.join(gt_folder, w_fnm), 'r') as gt_file:
-                    gt_word = _remove_abbreviations(gt_file.readline().strip())
+                    gt_word = _remove_abbreviations_icr(gt_file.readline().strip())
                 with open(os.path.join(gen_folder, w_fnm), 'r') as gen_file:
                     gen_words = [ast.literal_eval(w.strip())[1] for w in gen_file.readlines()]
 
@@ -97,7 +167,7 @@ def correct_transcr_count(gen_folder, gt_folder=GT_FOLDER):
 
     for fnm in fnms:
         with open(os.path.join(gt_folder, fnm), 'r') as gt_file:
-            gt_word = _remove_abbreviations(gt_file.readline().strip())
+            gt_word = _remove_abbreviations_icr(gt_file.readline().strip())
         with open(os.path.join(gen_folder, fnm), 'r') as gen_file:
             gen_words = [ast.literal_eval(w.strip())[1] for w in gen_file.readlines()]
         if gt_word in gen_words:
@@ -105,7 +175,11 @@ def correct_transcr_count(gen_folder, gt_folder=GT_FOLDER):
     
     return correct_transcr/len(fnms)
 
-def evaluate_full_transcriptions(gen_dir, gt_dir):
+def evaluate_full_transcriptions(gen_dir, gt_dir, evalfnm, mode='icr'):
+    ok_modes = ['icr', 'tess']
+    if mode not in ok_modes:
+        raise ValueError("Unknown mode: use "+' or '.join(ok_modes))
+
     tsc_folder = pathlib.Path(gen_dir)
 
     evaluation = dict()
@@ -125,7 +199,11 @@ def evaluate_full_transcriptions(gen_dir, gt_dir):
         page_eds = []
 
         for i, (gen_line, gt_line) in enumerate(zip(gen_lines, gt_lines)):
-            gen_line, gt_line = gen_line.strip(), _remove_abbreviations(gt_line.strip())
+            if mode == 'icr':
+                gt_line = _remove_abbreviations_icr(gt_line.strip())
+            else:
+                gt_line = _remove_abbreviations_tess(gt_line.strip())
+            gen_line = gen_line.strip()
             eval_ed = ed.eval(gen_line, gt_line)
 
             evaluation[tsc_path.stem][i]['gt'] = gt_line
@@ -144,11 +222,47 @@ def evaluate_full_transcriptions(gen_dir, gt_dir):
 
     evaluation['avg_tot_ed'] = sum(eds) / len(eds)
 
-    json.dump(evaluation, open('full_tsc_eval.json', 'w'), indent=2)
+    json.dump(evaluation, open(evalfnm+'.json', 'w'), indent=2)
+
+def get_diffs_count(eval_fnm):
+    tsc_eval = json.load(open(eval_fnm, 'r'))
+    diffs = []
+
+    for pagename in tsc_eval:
+        if pagename != 'avg_tot_ed':
+            for line in tsc_eval[pagename]:
+                if line != 'avg_page_ed':
+                    gt_tsc = tsc_eval[pagename][line]['gt']
+                    gen_tsc = tsc_eval[pagename][line]['gen']
+
+                    matcher = difflib.SequenceMatcher(None, gt_tsc, gen_tsc, autojunk=False)
+                    diff = list(matcher.get_matching_blocks())
+
+                    if len(diff) > 0:
+                        diffs.append((gt_tsc[:diff[0].a], gen_tsc[:diff[0].b]))
+                        for (a1, b1, size1), (a2, b2, size2) in zip(diff, diff[1:]):
+                            diffs.append((gt_tsc[a1 + size1:a2], gen_tsc[b1 + size1:b2]))
+
+    return Counter(diffs)
+
 
 
 if __name__ == '__main__':
-    evaluate_full_transcriptions('page_transcriptions_20_test4', 'page_transcriptions_gt')
+    # exts = ['_line', '_word', '_lineword', '_wordline']
+    #
+    # for ext in exts:
+    # evaluate_full_transcriptions(
+    #     'page_transcriptions_tess_line_sparse3k',
+    #     'page_transcriptions_gt',
+    #     'page_tsc_eval_tess_line_sparse3k',
+    #     mode='tess'
+    # )
+    count = get_diffs_count('page_tsc_eval_tess_line_sparse3k.json')
+
+    countdict = OrderedDict([(str(k), c) for k, c in count.most_common(len(count))])
+
+    json.dump(countdict, open('count_diffs_tess.json', 'w'), indent=2)
+
     # tsc_json = json.load(open('tesseract_evaluation.json', 'r'))
     #
     # ixs_by_y = zip(
@@ -193,7 +307,7 @@ if __name__ == '__main__':
     # eds = []
     #
     # for gen_line, gt_line in genvsgt_tscs:
-    #     # gt_line = _remove_abbreviations(gt_line)
+    #     # gt_line = _remove_abbreviations_icr(gt_line)
     #     # gt_line = ' '.join(gt_line.split())
     #     eval_ed = ed.eval(gen_line, gt_line)
     #     print(gen_line.strip())

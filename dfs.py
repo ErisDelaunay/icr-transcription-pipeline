@@ -116,7 +116,13 @@ class WordDFS:
 
         if prob > lm_th:
             for v in G.successors(u):
-                ocr_predictions = np.log10(G.get_edge_data(u, v)['preds'])
+                ocr_predictions = G.get_edge_data(u, v)['preds']
+
+                for rank_ix, pos_ix in enumerate(np.argsort(-ocr_predictions)):
+                    ocr_predictions[pos_ix] = ocr_predictions[pos_ix] / (rank_ix+2)
+
+                ocr_predictions = np.log10(ocr_predictions)
+
                 tsc = ''.join(c for _, c, _ in visited)
 
                 tsc_score = self.lm.score(

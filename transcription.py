@@ -128,7 +128,7 @@ def main(unused_argv):
     word_decoder = WordDFS(flags.FLAGS.lm)
     line_decoder = LineDFS(word_decoder)
 
-    for page_path in list(src_dir.glob('*'))[-1:]:
+    for page_path in list(src_dir.glob('*'))[:]:
         start_time = time()
 
         tsc_dir = dst_dir / page_path.stem / 'tsc'
@@ -248,7 +248,7 @@ def main(unused_argv):
                 #     ) <= max_distance:
                 are_close = True
                 for g_ix in range(wg1_ix, wg2_ix):
-                    if (sorted(ix2wordgraph[g_ix+1].nodes)[1][0][0] - sorted(ix2wordgraph[g_ix].nodes)[-1][-1][0]) > 20:
+                    if (sorted(ix2wordgraph[g_ix+1].nodes)[1][0][0] - sorted(ix2wordgraph[g_ix].nodes)[-1][-1][0]) > 15:
                         are_close = False
                         break
                 if are_close:
@@ -337,7 +337,7 @@ def main(unused_argv):
 
             print(line_tsc)
 
-            with open('tsc_'+page_path.stem+'.txt', 'a') as f:
+            with open(page_path.stem+'.txt', 'a') as f:
                 f.write(line_tsc.replace('#', ' ').strip() + '\n')
 
         end_time = time()
