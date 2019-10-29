@@ -116,10 +116,10 @@ class WordDFS:
 
         if prob > lm_th:
             for v in G.successors(u):
-                ocr_predictions = G.get_edge_data(u, v)['preds']
+                ocr_predictions = G.get_edge_data(u, v)['preds'] * (1 - 1/(len(visited)+1))
 
-                for rank_ix, pos_ix in enumerate(np.argsort(-ocr_predictions)):
-                    ocr_predictions[pos_ix] = ocr_predictions[pos_ix] / (rank_ix+2)
+                # for rank_ix, pos_ix in enumerate(np.argsort(-ocr_predictions)):
+                #     ocr_predictions[pos_ix] = ocr_predictions[pos_ix] / (rank_ix+2)
 
                 ocr_predictions = np.log10(ocr_predictions)
 
