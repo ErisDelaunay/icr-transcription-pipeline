@@ -252,9 +252,9 @@ if __name__ == '__main__':
     #
     # for ext in exts:
     evaluate_full_transcriptions(
-        'page_transcriptions_icr_geom_nchar06',
+        'page_transcriptions_icr_smoothlen',
         'page_transcriptions_gt',
-        'page_tsc_eval_icr_geom_nchar06',
+        'page_tsc_eval_icr_smoothlen',
         mode='icr'
     )
     # count = get_diffs_count('page_tsc_eval_tess_line_sparse3k.json')

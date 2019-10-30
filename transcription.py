@@ -303,7 +303,7 @@ def main(unused_argv):
                 line_pieces.append(piece_lattice)
 
             line_tsc = ''
-            for piece in line_pieces:
+            for p_n, piece in enumerate(line_pieces):
                 transcriptions = set()
                 for path in line_decoder.paths_beam(
                             piece,
@@ -332,6 +332,11 @@ def main(unused_argv):
                         tfil = []
                     if tsc_line[1] not in tfil:
                         transcriptions_filtered.append(tsc_line)
+
+                tsc_piece_path = tsc_dir / (line_path.stem + '_' + str(p_n)+'.txt')
+                with tsc_piece_path.open('w') as lp:
+                    for t_f in transcriptions_filtered:
+                        lp.write(str(t_f)+'\n')
 
                 line_tsc += transcriptions_filtered[0][1] if len(transcriptions_filtered) > 0 else ''
 
