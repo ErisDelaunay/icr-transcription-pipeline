@@ -238,7 +238,7 @@ class LineDFS:
 
                 for _, tsc in transcriptions_filtered[:3]:
                     tsc_score = self.wdfs.lm.score(
-                        ' '.join(list(tsc_so_far+'#'+tsc)), bos=False, eos=False
+                        ' '.join(list('#'+tsc_so_far+'#'+tsc+'#')), bos=False, eos=False
                     ) - prob_so_far
                     multiedges.append((v, tsc, tsc_score))
 

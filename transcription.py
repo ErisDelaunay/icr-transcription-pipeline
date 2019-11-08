@@ -320,7 +320,7 @@ def main(unused_argv):
                     transcript = transcript.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
                     transcript = transcript.replace(';', '')
                     # print(prob, '\t', transcript)
-                    transcriptions.add((prob, transcript, tuple(path)))
+                    transcriptions.add((prob, transcript+'#', tuple(path)))
 
                 transcriptions = sorted(transcriptions, reverse=True)
                 transcriptions_filtered = []
