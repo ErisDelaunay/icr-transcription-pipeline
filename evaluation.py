@@ -252,16 +252,16 @@ if __name__ == '__main__':
     #
     # for ext in exts:
     evaluate_full_transcriptions(
-        'page_transcriptions_icr_smoothlen',
+        'page_transcription_icr_lmfix_lineth42',
         'page_transcriptions_gt',
-        'page_tsc_eval_icr_smoothlen',
+        'page_tsc_eval_icr_lmfix_lineth42',
         mode='icr'
     )
-    # count = get_diffs_count('page_tsc_eval_tess_line_sparse3k.json')
+    # count = get_diffs_count('page_tsc_eval_icr_all.json')
     #
     # countdict = OrderedDict([(str(k), c) for k, c in count.most_common(len(count))])
     #
-    # json.dump(countdict, open('count_diffs_tess.json', 'w'), indent=2)
+    # json.dump(countdict, open('count_diffs_icr_old.json', 'w'), indent=2)
 
     # tsc_json = json.load(open('tesseract_evaluation.json', 'r'))
     #
