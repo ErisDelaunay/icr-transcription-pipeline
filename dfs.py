@@ -207,7 +207,7 @@ class LineDFS:
         if prob_so_far > -35.0:
             for v in G.successors(u):
                 transcriptions = set()
-                wg = G[u][v]['word_graph']
+                wg = G[u][v]['graph']
 
                 for path in self.wdfs.paths_beam(
                         wg,
