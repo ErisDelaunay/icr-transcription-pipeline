@@ -252,10 +252,10 @@ if __name__ == '__main__':
     #
     # for ext in exts:
     evaluate_full_transcriptions(
-        'page_transcription_icr_lmfix_lineth42',
+        'page_transcriptions_tess_2pg',
         'page_transcriptions_gt',
-        'page_tsc_eval_icr_lmfix_lineth42',
-        mode='icr'
+        'page_tsc_eval_tess_2pg',
+        mode='tess'
     )
     # count = get_diffs_count('page_tsc_eval_icr_all.json')
     #

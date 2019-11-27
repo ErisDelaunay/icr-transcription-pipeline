@@ -207,23 +207,24 @@ class LineDFS:
         if prob_so_far > -35.0:
             for v in G.successors(u):
                 transcriptions = set()
-                wg = G[u][v]['word_graph']
+                wg = G[u][v]['graph']
 
-                for path in self.wdfs.paths_beam(
-                        wg,
-                        source=sorted(wg.nodes())[0],
-                        targets={sorted(wg.nodes())[-1]},
-                        width=3,
-                        lm_th=lm_th):
-                    transcript = ''
-                    prob = 0.0
-                    for _, char, score in path[1:]:
-                        transcript += char
-                        prob += score
-                    transcript = transcript.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
-                    transcript = transcript.strip(';')
+                if len(wg.nodes()) > 0:
+                    for path in self.wdfs.paths_beam(
+                            wg,
+                            source=sorted(wg.nodes())[0],
+                            targets={sorted(wg.nodes())[-1]},
+                            width=3,
+                            lm_th=lm_th):
+                        transcript = ''
+                        prob = 0.0
+                        for _, char, score in path[1:]:
+                            transcript += char
+                            prob += score
+                        transcript = transcript.replace('b;', 'bus').replace('q;', 'que').replace('qui;', 'que')
+                        transcript = transcript.strip(';')
 
-                    transcriptions.add((prob, transcript))
+                        transcriptions.add((prob, transcript))
 
                 transcriptions = sorted(transcriptions, reverse=True)
                 transcriptions_filtered = []
